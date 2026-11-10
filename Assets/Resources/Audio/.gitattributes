@@ -1,0 +1,6 @@
+# These small generated/bundled files are stored directly in git instead of Git LFS
+# (they total a few MB and can be regenerated with Tools/art/*.py).
+*.png !filter !diff !merge -text
+*.jpg !filter !diff !merge -text
+*.wav !filter !diff !merge -text
+*.ttf !filter !diff !merge -text
