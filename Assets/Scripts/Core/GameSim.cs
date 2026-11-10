@@ -73,10 +73,17 @@ namespace StartupClicker.Core
         /// <summary>Credits/sec of one placed building, before frenzy.</summary>
         public double CpsOf(PlacedBuilding b)
         {
-            if (b.DefId == Catalog.CoreId) return 0;
-            var def = Catalog.Building(b.DefId);
-            double mult = buildingMult.TryGetValue(b.DefId, out var m) ? m : 1;
-            return def.BaseCps * LevelMultiplier(b.Level) * mult * globalMult;
+            return CpsFor(b.DefId, b.Level);
+        }
+
+        /// <summary>Credits/sec a building of this type at this level would make, with every owned upgrade applied (before frenzy).</summary>
+        public double CpsFor(string defId, int level = 1)
+        {
+            if (defId == Catalog.CoreId) return 0;
+            var def = Catalog.Building(defId);
+            if (def == null) return 0;
+            double mult = buildingMult.TryGetValue(defId, out var m) ? m : 1;
+            return def.BaseCps * LevelMultiplier(level) * mult * globalMult;
         }
 
         /// <summary>Price to raise this building one level, or -1 if it is already max level.</summary>

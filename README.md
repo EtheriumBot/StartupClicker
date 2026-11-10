@@ -24,8 +24,9 @@ On first import Unity creates `.meta` files for the new assets – commit them.
 | --- | --- |
 | Earn credits | Click the Command Core (centre of the map) |
 | Build | Pick a building in the **BUILD** tab, click a tile. Hold **Shift** to keep building |
-| Select a building | Click it → **Upgrade / Move / Sell** |
-| Cancel / deselect | Right-click or **Esc** |
+| Select a building (HQ included) | **Right-click** it → **Upgrade / Move / Sell** (the HQ can’t be sold) |
+| Left-click a building | Bounces it – reserved for future building abilities |
+| Cancel / deselect | Right-click empty ground or **Esc** |
 | Pan | Drag with any mouse button, or **WASD** / arrow keys |
 | Zoom | Mouse wheel |
 | Supply drop | Click the crate when it appears: bonus credits or a x7 frenzy |

@@ -41,6 +41,8 @@ namespace StartupClicker.Game
         GameObject selectionPanel;
         Text selName, selStats, selUpgradeText, selSellText;
         Image selUpgradeImage, selIcon;
+        GameObject selSellButton;
+        readonly Stack<Text> floatPool = new Stack<Text>();
 
         readonly List<Card> cards = new List<Card>();
         bool showUpgrades;
@@ -204,6 +206,7 @@ namespace StartupClicker.Game
             Ui.Stretch(Ui.Label("Label", move.transform, "MOVE", 24, Ui.Navy, TextAnchor.MiddleCenter).rectTransform);
 
             var sell = Ui.Btn("Sell", panel.transform, "ui_btn", 14f, Ui.Slate, game.SellSelected);
+            selSellButton = sell.gameObject;
             Ui.Place((RectTransform)sell.transform, new Vector2(0, 0), new Vector2(0, 0), new Vector2(550, 16), new Vector2(154, 48));
             selSellText = Ui.Label("Label", sell.transform, "SELL", 24, Ui.Cream, TextAnchor.MiddleCenter);
             Ui.Stretch(selSellText.rectTransform);
@@ -226,8 +229,9 @@ namespace StartupClicker.Game
             toastGroup.alpha = 0f;
             toastGroup.blocksRaycasts = false;
 
-            var help = Ui.Label("Help", root, "CLICK THE CORE TO EARN  //  DRAG TO PAN  //  WHEEL TO ZOOM", 20, Ui.Dim, TextAnchor.LowerLeft);
-            Ui.Place(help.rectTransform, new Vector2(0, 0), new Vector2(0, 0), new Vector2(28, 22), new Vector2(600, 24));
+            var help = Ui.Label("Help", root, "CLICK THE CORE TO EARN  //  RIGHT-CLICK A BUILDING TO UPGRADE / MOVE  //  DRAG TO PAN  //  WHEEL TO ZOOM", 20, Ui.Dim, TextAnchor.MiddleCenter);
+            // top-centre, under where toasts appear, so it never sits behind the selection panel
+            Ui.Place(help.rectTransform, new Vector2(0.5f, 1), new Vector2(0.5f, 1), new Vector2(-232, -92), new Vector2(1000, 24));
 
             var reset = Ui.Btn("Reset", root, "ui_btn", 14f, new Color(Ui.Slate.r, Ui.Slate.g, Ui.Slate.b, 0.8f), OnResetClicked);
             Ui.Place((RectTransform)reset.transform, new Vector2(0, 0), new Vector2(0, 0), new Vector2(24, 56), new Vector2(170, 36));
@@ -308,7 +312,7 @@ namespace StartupClicker.Game
 
             string sub = locked
                 ? "REQUIRES CORE LEVEL " + def.UnlockCoreLevel
-                : "OWNED " + sim.CountOf(def.Id) + "  //  +" + NumberFormat.Format(def.BaseCps, 1) + "/SEC  //  " + def.Size + "x" + def.Size;
+                : "OWNED " + sim.CountOf(def.Id) + "  //  +" + NumberFormat.Format(sim.CpsFor(def.Id), 2) + "/SEC  //  " + def.Size + "x" + def.Size;
             var subText = Ui.Label("Sub", rt, sub, 19, locked ? Ui.Red : Ui.Dim, TextAnchor.UpperLeft, false);
             Ui.Place(subText.rectTransform, new Vector2(0, 1), new Vector2(0, 1), new Vector2(104, -44), new Vector2(290, 24));
 
@@ -354,7 +358,11 @@ namespace StartupClicker.Game
             var def = Catalog.Building(b.DefId);
             selIcon.sprite = SpriteBank.Building(b.DefId, b.Level);
             selName.text = def.Name.ToUpperInvariant() + "   <color=#EE4252>LV " + b.Level + "</color>";
-            selStats.text = "+" + NumberFormat.Format(sim.CpsOf(b), 1) + " / SEC";
+            bool isCore = b.DefId == Catalog.CoreId;
+            selStats.text = isCore
+                ? NumberFormat.Format(sim.ClickValue, 2) + " / CLICK  //  UNLOCKS NEW BUILDINGS"
+                : "+" + NumberFormat.Format(sim.CpsOf(b), 2) + " / SEC";
+            selSellButton.SetActive(!isCore); // the HQ can be moved and upgraded, never sold
             selSellText.text = "SELL +" + NumberFormat.Format(sim.SellValueOf(b));
         }
 
@@ -370,8 +378,8 @@ namespace StartupClicker.Game
             shownCredits += (credits - shownCredits) * (1.0 - Math.Exp(-14.0 * Time.unscaledDeltaTime));
             if (Math.Abs(credits - shownCredits) < 0.5) shownCredits = credits;
             creditsText.text = NumberFormat.Format(shownCredits);
-            cpsText.text = "+" + NumberFormat.Format(sim.Cps, 1) + " / SEC";
-            clickText.text = NumberFormat.Format(sim.ClickValue, 1) + " / CLICK";
+            cpsText.text = "+" + NumberFormat.Format(sim.Cps, 2) + " / SEC";
+            clickText.text = NumberFormat.Format(sim.ClickValue, 2) + " / CLICK";
 
             var core = sim.CoreBuilding;
             double coreCost = sim.UpgradeCostOf(core);
@@ -452,19 +460,36 @@ namespace StartupClicker.Game
             creditsPunch.Punch(0.25f);
         }
 
-        /// <summary>Spawn a number at a screen position that drifts up and fades out.</summary>
+        /// <summary>
+        /// Spawn a number at a screen position that drifts up and fades out.
+        /// Text objects are pooled (reused) because every building now pops once a second.
+        /// </summary>
         public void FloatText(Vector2 screen, string content, Color color, int size, float life = 0.8f)
         {
-            var text = Ui.Label("Float", fxLayer, content, size, color, TextAnchor.MiddleCenter);
-            var shadow = text.gameObject.AddComponent<Shadow>();
-            shadow.effectColor = new Color(0.04f, 0.07f, 0.1f, 0.8f);
-            shadow.effectDistance = new Vector2(2, -2);
+            Text text;
+            if (floatPool.Count > 0)
+            {
+                text = floatPool.Pop();
+                text.gameObject.SetActive(true);
+                text.fontSize = size;
+                text.text = content;
+            }
+            else
+            {
+                text = Ui.Label("Float", fxLayer, content, size, color, TextAnchor.MiddleCenter);
+                var shadow = text.gameObject.AddComponent<Shadow>();
+                shadow.effectColor = new Color(0.04f, 0.07f, 0.1f, 0.8f);
+                shadow.effectDistance = new Vector2(2, -2);
+                text.rectTransform.sizeDelta = new Vector2(300, 60);
+            }
+            text.color = color;
             var rt = text.rectTransform;
-            rt.sizeDelta = new Vector2(300, 60);
+            rt.SetAsLastSibling();
 
             // convert screen pixels into the canvas's own (scaled) coordinates
             Vector2 local;
             RectTransformUtility.ScreenPointToLocalPointInRectangle(fxLayer, screen, null, out local);
+            rt.localPosition = local;
             float drift = UnityEngine.Random.Range(-18f, 18f);
             Tween.Run(life, t =>
             {
@@ -475,7 +500,12 @@ namespace StartupClicker.Game
                 var c = color;
                 c.a = color.a * (1f - Mathf.Clamp01((t - 0.55f) / 0.45f));
                 text.color = c;
-            }, () => { if (rt != null) Destroy(rt.gameObject); });
+            }, () =>
+            {
+                if (text == null) return;
+                text.gameObject.SetActive(false);
+                floatPool.Push(text);
+            });
         }
 
         void OnResetClicked()

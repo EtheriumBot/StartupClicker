@@ -12,7 +12,7 @@ namespace StartupClicker.Core
         static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
         /// <param name="value">The number to show.</param>
-        /// <param name="smallDecimals">Decimals to keep for values under 1000 (e.g. 1 for "0.1/sec").</param>
+        /// <param name="smallDecimals">Most decimals to show for values under 1000 (e.g. 2 gives "0.25/sec"); trailing zeros are dropped.</param>
         public static string Format(double value, int smallDecimals = 0)
         {
             if (double.IsNaN(value) || double.IsInfinity(value)) return "∞";
@@ -21,7 +21,7 @@ namespace StartupClicker.Core
             if (value < 1000000)
             {
                 if (smallDecimals > 0 && value < 1000 && Math.Abs(value - Math.Round(value)) > 1e-9)
-                    return value.ToString("N" + smallDecimals, Inv);
+                    return value.ToString("#,0." + new string('#', smallDecimals), Inv); // "0.25", "0.1", not "0.10"
                 return Math.Floor(value + 1e-9).ToString("N0", Inv);
             }
 

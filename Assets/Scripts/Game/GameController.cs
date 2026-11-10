@@ -40,14 +40,17 @@ namespace StartupClicker.Game
         int ghostX, ghostY;
         bool ghostValid;
 
-        // mouse press tracking, to tell a click from a drag
+        // Mouse press tracking, to tell a click from a drag. Left = primary, right = secondary.
         bool pressActive, pressOnCore, dragging;
-        Vector2 pressPos, lastMouse;
+        bool rightActive, rightDragging;
+        Vector2 pressPos, rightPressPos, lastMouse;
 
-        float autosaveTimer, incomePopTimer, dropTimer;
+        float autosaveTimer, dropTimer;
         GameObject dropObject;
         float dropLife;
-        readonly List<PlacedBuilding> scratch = new List<PlacedBuilding>();
+        /// <summary>For each building, the last whole second (on its own staggered clock) it showed an income pop.</summary>
+        readonly Dictionary<int, long> lastPopSecond = new Dictionary<int, long>();
+        const int MaxPopsPerFrame = 12;
 
         public PlacedBuilding Selected { get { return Sim.Find(selectedUid); } }
 
@@ -102,7 +105,7 @@ namespace StartupClicker.Game
             HandleInput();
             UpdateGhost();
             UpdateDrop(dt);
-            UpdateIncomePops(dt);
+            UpdateIncomePops();
 
             autosaveTimer += dt;
             if (autosaveTimer >= AutosaveSeconds) Save();
@@ -137,11 +140,28 @@ namespace StartupClicker.Game
                 if (Mathf.Abs(scroll) > 0.01f) Cam.Zoom(Mathf.Sign(scroll));
             }
 
-            // right or middle button: drag to pan, right-click to cancel
-            if (mouse.rightButton.wasPressedThisFrame && !overUi) CancelOrDeselect();
-            if ((mouse.rightButton.isPressed || mouse.middleButton.isPressed) && !pressActive)
-                Cam.PanByScreenDelta(delta);
+            // Middle button always pans.
+            if (mouse.middleButton.isPressed && !pressActive && !rightActive) Cam.PanByScreenDelta(delta);
 
+            // Right button: a short click selects a building (or cancels), a drag pans.
+            if (mouse.rightButton.wasPressedThisFrame && !overUi)
+            {
+                rightActive = true;
+                rightDragging = false;
+                rightPressPos = pos;
+            }
+            if (rightActive && mouse.rightButton.isPressed)
+            {
+                if (!rightDragging && (pos - rightPressPos).magnitude > DragThresholdPixels) rightDragging = true;
+                if (rightDragging) Cam.PanByScreenDelta(delta);
+            }
+            if (rightActive && mouse.rightButton.wasReleasedThisFrame)
+            {
+                rightActive = false;
+                if (!rightDragging) OnSecondaryClick(Cam.ScreenToWorld(pos));
+            }
+
+            // Left button: clicks the HQ / supply drop / confirms placement; a drag pans.
             if (mouse.leftButton.wasPressedThisFrame && !overUi)
             {
                 pressActive = true;
@@ -170,29 +190,40 @@ namespace StartupClicker.Game
             if (pressActive && mouse.leftButton.wasReleasedThisFrame)
             {
                 pressActive = false;
-                if (!dragging && !pressOnCore) OnWorldClick(Cam.ScreenToWorld(pos));
+                if (!dragging && !pressOnCore) OnPrimaryClick(Cam.ScreenToWorld(pos));
             }
         }
 
-        void OnWorldClick(Vector3 world)
+        /// <summary>Left click on the world (not the HQ, which is handled on press).</summary>
+        void OnPrimaryClick(Vector3 world)
         {
-            if (Mode == InputMode.Placing)
+            if (Mode == InputMode.Placing) { ConfirmPlacement(); return; }
+            if (Mode == InputMode.Moving) { ConfirmMove(); return; }
+
+            int uid = World.Pick(world);
+            if (uid != 0) OnBuildingPrimary(uid);
+            else Select(0);
+        }
+
+        /// <summary>
+        /// Left click on a building other than the HQ. For now it just bounces.
+        /// This is the hook for future building abilities (e.g. a Drone Bay launching a bonus run).
+        /// </summary>
+        void OnBuildingPrimary(int uid)
+        {
+            World.Punch(uid, 0.3f);
+        }
+
+        /// <summary>Right click: cancels placing/moving, otherwise selects the building under the cursor (HQ included).</summary>
+        void OnSecondaryClick(Vector3 world)
+        {
+            if (Mode != InputMode.Idle) { EndMode(); return; }
+            int uid = World.Pick(world);
+            Select(uid);
+            if (uid != 0)
             {
-                ConfirmPlacement();
-            }
-            else if (Mode == InputMode.Moving)
-            {
-                ConfirmMove();
-            }
-            else
-            {
-                int uid = World.Pick(world);
-                Select(uid == Sim.CoreBuilding.Uid ? 0 : uid);
-                if (uid != 0)
-                {
-                    World.Punch(uid, 0.35f);
-                    Sfx.Play("select", 0.4f);
-                }
+                World.Punch(uid, 0.35f);
+                Sfx.Play("select", 0.4f);
             }
         }
 
@@ -202,7 +233,7 @@ namespace StartupClicker.Game
         {
             double gained = Sim.Click();
             World.Punch(Sim.CoreBuilding.Uid, 0.5f);
-            Hud.FloatText(screen + new Vector2(UnityEngine.Random.Range(-24f, 24f), 30f), "+" + NumberFormat.Format(gained, 1),
+            Hud.FloatText(screen + new Vector2(UnityEngine.Random.Range(-24f, 24f), 30f), "+" + NumberFormat.Format(gained, 2),
                 Sim.FrenzyActive ? WorldView.Gold : WorldView.Cream, 38);
             Hud.BumpCredits();
             ShardBurst.Spawn(world, Sim.FrenzyActive ? WorldView.Gold : WorldView.Red, 5, 0.9f);
@@ -349,6 +380,7 @@ namespace StartupClicker.Game
             double refund = Sim.TrySell(b.Uid);
             if (refund < 0) return;
             World.Remove(b.Uid);
+            lastPopSecond.Remove(b.Uid);
             Select(0);
             ShardBurst.Spawn(at, WorldView.Cream, 10, 1f);
             Hud.FloatText(Cam.WorldToScreen(at), "+" + NumberFormat.Format(refund), WorldView.Gold, 34);
@@ -459,24 +491,38 @@ namespace StartupClicker.Game
 
         // ------------------------------------------------------------ ambient income numbers
 
-        void UpdateIncomePops(float dt)
+        /// <summary>
+        /// Every building shows "+N" once per second, where N is exactly what it earns per second.
+        /// Each building runs on its own clock offset (golden-ratio spacing by uid) so the pops are
+        /// spread out instead of all firing on the same frame.
+        /// </summary>
+        void UpdateIncomePops()
         {
-            incomePopTimer -= dt;
-            if (incomePopTimer > 0f) return;
-            incomePopTimer = 1.1f;
-
-            scratch.Clear();
+            int budget = MaxPopsPerFrame;
+            float now = Time.unscaledTime;
             foreach (var b in Sim.State.Buildings)
-                if (b.DefId != Catalog.CoreId) scratch.Add(b);
-            // show what a couple of random buildings earned, so the base feels alive
-            for (int i = 0; i < 2 && scratch.Count > 0; i++)
             {
-                int k = UnityEngine.Random.Range(0, scratch.Count);
-                var b = scratch[k];
-                scratch.RemoveAt(k);
+                if (b.DefId == Catalog.CoreId) continue;
+                float phase = (b.Uid * 0.618034f) % 1f;
+                long second = (long)Math.Floor(now + phase);
+                if (!lastPopSecond.TryGetValue(b.Uid, out var last))
+                {
+                    lastPopSecond[b.Uid] = second; // first sighting: start the clock, pop next second
+                    continue;
+                }
+                if (second == last) continue;
+                lastPopSecond[b.Uid] = second;
+
+                if (Mode == InputMode.Moving && b.Uid == movingUid) continue;
+                if (budget <= 0) continue;
+                Vector3 top = World.TopOf(b.Uid);
+                Vector3 vp = Cam.Camera.WorldToViewportPoint(top);
+                if (vp.x < -0.05f || vp.x > 1.05f || vp.y < -0.05f || vp.y > 1.05f) continue; // off-screen
+                budget--;
+
                 double perSecond = Sim.CpsOf(b) * Sim.FrenzyFactor;
-                Hud.FloatText(Cam.WorldToScreen(World.TopOf(b.Uid)), "+" + NumberFormat.Format(perSecond * 1.1, 1),
-                    new Color(1f, 1f, 1f, 0.75f), 22, 0.9f);
+                Hud.FloatText(Cam.WorldToScreen(top), "+" + NumberFormat.Format(perSecond, 2),
+                    Sim.FrenzyActive ? WorldView.Gold : new Color(1f, 1f, 1f, 0.8f), 22, 0.9f);
                 World.Punch(b.Uid, 0.12f);
             }
         }

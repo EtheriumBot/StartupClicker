@@ -173,23 +173,40 @@ namespace StartupClicker.Game
         /// <summary>Which building is under this world point? Returns its uid, or 0.</summary>
         public int Pick(Vector3 world)
         {
-            // 1) Tall sprites cover the tiles behind them, so first test each building's body,
-            //    front-most first.
+            // 1) Test the visible pixels of every building sprite and keep the front-most hit.
+            //    (Bounding rectangles are not enough: the big HQ sprite is mostly empty space and
+            //    its rectangle would swallow clicks meant for buildings tucked beside it.)
             View best = null;
             foreach (var v in views.Values)
             {
                 if (v.Data.Uid == hiddenUid || v.Renderer.sprite == null) continue;
-                var b = v.Renderer.bounds;
-                float halfBody = v.Def.Size * 0.34f;
-                if (Mathf.Abs(world.x - b.center.x) > halfBody) continue;
-                if (world.y < b.min.y + 0.06f || world.y > b.max.y - b.size.y * 0.08f) continue;
-                if (best == null || v.Renderer.sortingOrder > best.Renderer.sortingOrder) best = v;
+                if (best != null && v.Renderer.sortingOrder <= best.Renderer.sortingOrder) continue;
+                if (!v.Renderer.bounds.Contains(new Vector3(world.x, world.y, v.Renderer.bounds.center.z))) continue;
+                if (HitsVisiblePixel(v.Renderer, world)) best = v;
             }
             if (best != null) return best.Data.Uid;
 
             // 2) Otherwise whatever owns the ground tile under the cursor.
             var g = IsoGrid.ToGrid(world);
-            return sim.Grid.At(Mathf.FloorToInt(g.x), Mathf.FloorToInt(g.y));
+            int uid = sim.Grid.At(Mathf.FloorToInt(g.x), Mathf.FloorToInt(g.y));
+            return uid == hiddenUid ? 0 : uid;
+        }
+
+        /// <summary>
+        /// Converts the world point into a pixel of the sprite's texture and checks it is solid.
+        /// InverseTransformPoint undoes position and the squash-and-stretch scale, giving a point
+        /// in sprite units measured from the pivot.
+        /// </summary>
+        static bool HitsVisiblePixel(SpriteRenderer renderer, Vector3 world)
+        {
+            var sprite = renderer.sprite;
+            var mask = SpriteBank.Mask(sprite.name);
+            if (mask == null) return true; // no mask available: fall back to the rectangle test
+            Vector3 local = renderer.transform.InverseTransformPoint(world);
+            float px = local.x * sprite.pixelsPerUnit + sprite.pivot.x;
+            float py = local.y * sprite.pixelsPerUnit + sprite.pivot.y;
+            // > 50% opaque: ignores the soft ground shadow and faint glow halos
+            return mask.Sample(px / sprite.rect.width, py / sprite.rect.height) > 128;
         }
 
         // ------------------------------------------------------------ selection + ghost

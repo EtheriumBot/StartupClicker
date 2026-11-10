@@ -196,6 +196,36 @@ namespace StartupClicker.Tests
             Assert.AreEqual(sim.Grid.At(2, 2), again.Grid.At(2, 2));
         }
 
+        [Test]
+        public void CpsFor_IncludesUpgrades()
+        {
+            var sim = Rich();
+            Assert.AreEqual(0.1, sim.CpsFor("garage"), 1e-9);
+            for (int i = 0; i < 5; i++) sim.TryBuy("garage", i, 0);
+            sim.TryBuyUpgrade("garage_mk2");
+            sim.TryUpgrade(sim.CoreBuilding.Uid);
+            sim.TryBuyUpgrade("fund1");
+            Assert.AreEqual(0.1 * 2 * 1.25, sim.CpsFor("garage"), 1e-9);
+            Assert.AreEqual(0.1 * 2 * 2 * 1.25, sim.CpsFor("garage", 2), 1e-9);
+            Assert.AreEqual(sim.CpsFor("garage") * 5, sim.Cps, 1e-9);
+        }
+
+        [Test]
+        public void Core_CanBeMoved_AndStaysMovedAfterReload()
+        {
+            var sim = Rich();
+            int uid = sim.CoreBuilding.Uid;
+            Assert.IsTrue(sim.TryMove(uid, 2, 3));
+            Assert.AreEqual(0, sim.Grid.At(12, 12), "old centre is free");
+            Assert.AreEqual(uid, sim.Grid.At(4, 5));
+            Assert.NotNull(sim.TryBuy("garage", 12, 12));
+
+            var again = new GameSim(sim.State);
+            Assert.AreEqual(2, again.CoreBuilding.X);
+            Assert.AreEqual(3, again.CoreBuilding.Y);
+            Assert.AreEqual(uid, again.Grid.At(3, 4));
+        }
+
         [TestCase(0, "0")]
         [TestCase(999, "999")]
         [TestCase(1234, "1,234")]
